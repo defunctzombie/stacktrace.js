@@ -4,43 +4,41 @@
 //                  Johan Euphrosine <proppy@aminche.com> (2008)
 //                  Oyvind Sean Kinsey http://kinsey.no/blog (2010)
 //                  Victor Homyakov <victor-homyakov@users.sourceforge.net> (2010)
-/*global module, exports, define, ActiveXObject*/
-/**
- * Main function giving a function stack trace with a forced or passed in Error
- *
- * @cfg {Error} e The error to create a stacktrace from (optional)
- * @cfg {Boolean} guess If we should try to resolve the names of anonymous functions
- * @return {Array} of Strings with functions, lines, files, and arguments where possible
- */
-function printStackTrace(ex) {
-    var p = new printStackTrace();
-    return p.run(ex);
-}
 
-var proto = printStackTrace.prototype;
+var modes = {};
 
 /**
  * @param {Error} ex The error to create a stacktrace from (optional)
  * @param {String} mode Forced mode (optional, mostly for unit tests)
  */
-proto.run: function(ex, mode) {
-    ex = ex || this.createException();
-    // examine exception properties w/o debugger
-    //for (var prop in ex) {alert("Ex['" + prop + "']=" + ex[prop]);}
-    mode = mode || this.mode(ex);
-    if (mode === 'other') {
-        return this.other(arguments.callee);
-    } else {
-        return this[mode](ex);
-    }
-};
+var run = function(ex, mode) {
+    mode = mode || discover_mode(ex);
 
-proto.createException: function() {
-    try {
-        this.undef();
-    } catch (e) {
-        return e;
+    var mode_fn = modes[mode];
+    // handle this better?
+    if (!mode_fn) {
+        return [];
     }
+
+    var arg = ex;
+    if (mode === 'other') {
+        arg = arguments.callee;
+    }
+
+    var str_frames = mode_fn(arg);
+    var frames = [];
+    var regex = /^(?:(.*)@)?(.*?):(\d+)(?::(\d+))?$/
+    for (var i=0 ; i< str_frames.length ; ++i) {
+        var matches = str_frames[i].match(regex);
+        frames.push({
+            func: matches[1],
+            filename: matches[2],
+            line: matches[3],
+            column: matches[4]
+        })
+    }
+
+    return frames;
 };
 
 /**
@@ -49,7 +47,7 @@ proto.createException: function() {
  *
  * @return {String} mode of operation for the exception
  */
-proto.mode: function(e) {
+var discover_mode = function(e) {
     if (e['arguments'] && e.stack) {
         return 'chrome';
     } else if (e.stack && e.sourceURL) {
@@ -67,46 +65,12 @@ proto.mode: function(e) {
 };
 
 /**
- * Given a context, function name, and callback function, overwrite it so that it calls
- * printStackTrace() first with a callback and then runs the rest of the body.
- *
- * @param {Object} context of execution (e.g. window)
- * @param {String} functionName to instrument
- * @param {Function} callback function to call with a stack trace on invocation
- */
-proto.instrumentFunction: function(context, functionName, callback) {
-    context = context || window;
-    var original = context[functionName];
-    context[functionName] = function instrumented() {
-        callback.call(this, printStackTrace().slice(4));
-        return context[functionName]._instrumented.apply(this, arguments);
-    };
-    context[functionName]._instrumented = original;
-};
-
-/**
- * Given a context and function name of a function that has been
- * instrumented, revert the function to it's original (non-instrumented)
- * state.
- *
- * @param {Object} context of execution (e.g. window)
- * @param {String} functionName to de-instrument
- */
-proto.deinstrumentFunction: function(context, functionName) {
-    if (context[functionName].constructor === Function &&
-        context[functionName]._instrumented &&
-        context[functionName]._instrumented.constructor === Function) {
-        context[functionName] = context[functionName]._instrumented;
-    }
-};
-
-/**
  * Given an Error object, return a formatted Array based on Chrome's stack string.
  *
  * @param e - Error object to inspect
  * @return Array<String> of function calls, files and line numbers
  */
-proto.chrome: function(e) {
+modes.chrome = function(e) {
     return (e.stack + '\n')
         .replace(/^[\s\S]+?\s+at\s+/, ' at ') // remove message
         .replace(/^\s+(at eval )?at\s+/gm, '') // remove 'at' and indentation
@@ -123,7 +87,7 @@ proto.chrome: function(e) {
  * @param e - Error object to inspect
  * @return Array<String> of function calls, files and line numbers
  */
-proto.safari: function(e) {
+modes.safari = function(e) {
     return e.stack.replace(/\[native code\]\n/m, '')
         .replace(/^(?=\w+Error\:).*$\n/m, '')
         .replace(/^@/gm, '{anonymous}()@')
@@ -136,7 +100,7 @@ proto.safari: function(e) {
  * @param e - Error object to inspect
  * @return Array<String> of function calls, files and line numbers
  */
-proto.ie: function(e) {
+modes.ie = function(e) {
     return e.stack
         .replace(/^\s*at\s+(.*)$/gm, '$1')
         .replace(/^Anonymous function\s+/gm, '{anonymous}() ')
@@ -151,19 +115,19 @@ proto.ie: function(e) {
  * @param e - Error object to inspect
  * @return Array<String> of function calls, files and line numbers
  */
-proto.firefox: function(e) {
+modes.firefox = function(e) {
     return e.stack.replace(/(?:\n@:0)?\s+$/m, '')
         .replace(/^(?:\((\S*)\))?@/gm, '{anonymous}($1)@')
         .split('\n');
 };
 
 // Safari 5-, IE 9-, and others
-proto.other: function(curr) {
+modes.other = function(curr) {
     var ANON = '{anonymous}', fnRE = /function\s*([\w\-$]+)?\s*\(/i, stack = [], fn, args, maxStackSize = 10;
     while (curr && curr['arguments'] && stack.length < maxStackSize) {
         fn = fnRE.test(curr.toString()) ? RegExp.$1 || ANON : ANON;
         args = Array.prototype.slice.call(curr['arguments'] || []);
-        stack[stack.length] = fn + '(' + this.stringifyArguments(args) + ')';
+        stack[stack.length] = fn + '(' + stringifyArguments(args) + ')';
         curr = curr.caller;
     }
     return stack;
@@ -175,7 +139,7 @@ proto.other: function(curr) {
  * @param {Arguments,Array} args
  * @return {String} stringified arguments
  */
-proto.stringifyArguments: function(args) {
+var stringifyArguments = function(args) {
     var result = [];
     var slice = Array.prototype.slice;
     for (var i = 0; i < args.length; ++i) {
@@ -187,9 +151,9 @@ proto.stringifyArguments: function(args) {
         } else if (arg.constructor) {
             if (arg.constructor === Array) {
                 if (arg.length < 3) {
-                    result[i] = '[' + this.stringifyArguments(arg) + ']';
+                    result[i] = '[' + stringifyArguments(arg) + ']';
                 } else {
-                    result[i] = '[' + this.stringifyArguments(slice.call(arg, 0, 1)) + '...' + this.stringifyArguments(slice.call(arg, -1)) + ']';
+                    result[i] = '[' + stringifyArguments(slice.call(arg, 0, 1)) + '...' + stringifyArguments(slice.call(arg, -1)) + ']';
                 }
             } else if (arg.constructor === Object) {
                 result[i] = '#object';
@@ -205,4 +169,5 @@ proto.stringifyArguments: function(args) {
     return result.join(',');
 };
 
-module.exports = printStackTrace;
+module.exports = run;
+
