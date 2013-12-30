@@ -29,6 +29,9 @@ var run = function(ex, mode) {
     var frames = [];
     var regex = /^(?:(.*)@)?(.*?):(\d+)(?::(\d+))?$/
     for (var i=0 ; i< str_frames.length ; ++i) {
+        if (!str_frames[i]) {
+            continue;
+        }
         var matches = str_frames[i].match(regex);
         frames.push({
             func: matches[1],
@@ -123,6 +126,9 @@ modes.firefox = function(e) {
 
 // Safari 5-, IE 9-, and others
 modes.other = function(curr) {
+    return [];
+
+    // TODO how to handle legacy shit?
     var ANON = '{anonymous}', fnRE = /function\s*([\w\-$]+)?\s*\(/i, stack = [], fn, args, maxStackSize = 10;
     while (curr && curr['arguments'] && stack.length < maxStackSize) {
         fn = fnRE.test(curr.toString()) ? RegExp.$1 || ANON : ANON;
