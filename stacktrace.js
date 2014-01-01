@@ -53,6 +53,8 @@ var run = function(ex, mode) {
 var discover_mode = function(e) {
     if (e['arguments'] && e.stack) {
         return 'chrome';
+    } else if (e.stackArray) {
+        return 'chrome'; // TODO phantomjs
     } else if (e.stack && e.sourceURL) {
         return 'safari';
     } else if (e.stack && e.number) {
